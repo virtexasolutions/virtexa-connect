@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { SiteHeader } from "@/components/SiteHeader";
 import { SiteFooter } from "@/components/SiteFooter";
@@ -19,13 +19,16 @@ import {
   Building2,
   Save,
   Mail,
-  KeyRound,
+  LogOut,
+  Clock,
 } from "lucide-react";
 import {
   CATEGORIES,
-  findVendorsByEmail,
-  sendVerificationCode,
-  verifyCode,
+  fetchMyListings,
+  fetchMyPendingClaimIds,
+  getSignedInEmail,
+  sendLoginCode,
+  signOut,
   updateVendor,
   deleteVendor,
   type Vendor,
@@ -42,23 +45,26 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import { VerifyEmailCode } from "@/components/VerifyEmailCode";
 
-type Step = "lookup" | "verify" | "select" | "edit" | "success" | "deleted";
+type Step =
+  | "loading"
+  | "lookup"
+  | "verify"
+  | "select"
+  | "edit"
+  | "success"
+  | "deleted";
 
 const ClaimListing = () => {
   const navigate = useNavigate();
-  const [step, setStep] = useState<Step>("lookup");
+  const [step, setStep] = useState<Step>("loading");
   const [email, setEmail] = useState("");
   const [searching, setSearching] = useState(false);
   const [matches, setMatches] = useState<Vendor[]>([]);
+  const [pendingClaims, setPendingClaims] = useState(0);
   const [selected, setSelected] = useState<Vendor | null>(null);
   const [error, setError] = useState("");
-
-  // Verification state
-  const [otpCode, setOtpCode] = useState("");
-  const [sendingCode, setSendingCode] = useState(false);
-  const [verifying, setVerifying] = useState(false);
-  const [resendTimer, setResendTimer] = useState(0);
 
   // Edit form state
   const [form, setForm] = useState<Partial<Vendor>>({});
@@ -66,77 +72,51 @@ const ClaimListing = () => {
   const [tagsText, setTagsText] = useState("");
   const [saving, setSaving] = useState(false);
 
-  const startResendTimer = () => {
-    setResendTimer(60);
-    const interval = setInterval(() => {
-      setResendTimer((prev) => {
-        if (prev <= 1) {
-          clearInterval(interval);
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
+  const loadMyListings = async () => {
+    const [listings, claims] = await Promise.all([
+      fetchMyListings(),
+      fetchMyPendingClaimIds(),
+    ]);
+    setMatches(listings);
+    setPendingClaims(claims.length);
+    setStep("select");
+    window.scrollTo(0, 0);
   };
+
+  // Already signed in from an earlier visit: go straight to their listings.
+  useEffect(() => {
+    getSignedInEmail().then((signedIn) => {
+      if (signedIn) {
+        setEmail(signedIn);
+        loadMyListings();
+      } else {
+        setStep("lookup");
+      }
+    });
+  }, []);
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email.trim()) return;
     setSearching(true);
     setError("");
-    const results = await findVendorsByEmail(email.trim().toLowerCase());
+    const result = await sendLoginCode(email.trim().toLowerCase());
     setSearching(false);
-    if (results.length === 0) {
-      setError(
-        "No listings found for that email. Make sure you used the same email you listed with.",
-      );
-    } else {
-      setMatches(results);
-      // Send verification code
-      setSendingCode(true);
-      const result = await sendVerificationCode(email.trim().toLowerCase());
-      setSendingCode(false);
-      if (result.ok) {
-        setStep("verify");
-        startResendTimer();
-      } else {
-        setError(
-          result.error || "Failed to send verification code. Please try again.",
-        );
-      }
-    }
-  };
-
-  const handleResendCode = async () => {
-    setSendingCode(true);
-    setError("");
-    const result = await sendVerificationCode(email.trim().toLowerCase());
-    setSendingCode(false);
     if (result.ok) {
-      startResendTimer();
+      setStep("verify");
     } else {
-      setError(result.error || "Failed to resend code.");
+      setError(
+        result.error || "Failed to send verification code. Please try again.",
+      );
     }
   };
 
-  const handleVerify = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!otpCode.trim()) return;
-    setVerifying(true);
-    setError("");
-    const isValid = await verifyCode(
-      email.trim().toLowerCase(),
-      otpCode.trim(),
-    );
-    setVerifying(false);
-    if (isValid) {
-      setStep("select");
-      window.scrollTo(0, 0);
-    } else {
-      setError(
-        "Invalid or expired code. Please check your email and try again.",
-      );
-    }
+  const handleSignOut = async () => {
+    await signOut();
+    setMatches([]);
+    setSelected(null);
+    setEmail("");
+    setStep("lookup");
   };
 
   const handleSelect = (v: Vendor) => {
@@ -234,9 +214,9 @@ const ClaimListing = () => {
               </h1>
             </div>
             <p className="text-muted-foreground leading-relaxed mb-8">
-              Enter the email address you used when submitting your listing.
-              We'll send a one-time verification code to that email to confirm
-              your identity before you can make changes.
+              Enter the email address you used when submitting your listing,
+              or the email your claim was approved for. We'll send a one-time
+              code to confirm it's you before you can make changes.
             </p>
 
             <Card className="border-border/70 bg-card">
@@ -270,13 +250,21 @@ const ClaimListing = () => {
                     disabled={searching}
                     className="w-full gradient-btn border-0 font-semibold"
                   >
-                    {searching ? "Searching…" : "Find My Listing"}
+                    {searching ? "Sending code…" : "Send Verification Code"}
                   </Button>
                 </form>
               </CardContent>
             </Card>
 
             <p className="mt-6 text-center text-sm text-muted-foreground">
+              Found your business in the directory but never listed it? Open
+              its page and choose{" "}
+              <span className="font-semibold text-foreground">
+                Claim this listing
+              </span>
+              .
+            </p>
+            <p className="mt-2 text-center text-sm text-muted-foreground">
               Don't have a listing yet?{" "}
               <Link
                 to="/submit-listing"
@@ -288,108 +276,58 @@ const ClaimListing = () => {
           </div>
         )}
 
+        {step === "loading" && (
+          <p className="py-12 text-center text-muted-foreground">Loading…</p>
+        )}
+
         {/* Step: Verify */}
         {step === "verify" && (
-          <div>
-            <div className="flex items-center gap-3 mb-2">
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-secondary text-primary border border-primary/20">
-                <KeyRound className="h-6 w-6" />
-              </div>
-              <h1 className="font-display text-3xl font-bold tracking-tight">
-                Verify Your Identity
-              </h1>
-            </div>
-            <p className="text-muted-foreground leading-relaxed mb-8">
-              We sent a 6-digit verification code to{" "}
-              <span className="font-semibold text-foreground">{email}</span>.
-              Enter it below to confirm you own this listing before making any
-              changes.
-            </p>
-
-            <Card className="border-border/70 bg-card">
-              <CardContent className="pt-6">
-                <form onSubmit={handleVerify} className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="otp" className="text-sm font-semibold">
-                      Verification Code
-                    </Label>
-                    <Input
-                      id="otp"
-                      type="text"
-                      inputMode="numeric"
-                      pattern="[0-9]{6}"
-                      maxLength={6}
-                      placeholder="123456"
-                      value={otpCode}
-                      onChange={(e) =>
-                        setOtpCode(e.target.value.replace(/\D/g, ""))
-                      }
-                      className="text-center text-2xl tracking-[0.5em] font-bold"
-                      required
-                    />
-                  </div>
-                  {error && (
-                    <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
-                      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                      <span>{error}</span>
-                    </div>
-                  )}
-                  <Button
-                    type="submit"
-                    disabled={verifying || otpCode.length !== 6}
-                    className="w-full gradient-btn border-0 font-semibold"
-                  >
-                    {verifying ? "Verifying…" : "Verify Code"}
-                  </Button>
-                </form>
-
-                <div className="mt-4 text-center">
-                  {resendTimer > 0 ? (
-                    <p className="text-sm text-muted-foreground">
-                      Resend code in {resendTimer}s
-                    </p>
-                  ) : (
-                    <button
-                      onClick={handleResendCode}
-                      disabled={sendingCode}
-                      className="text-sm font-semibold text-primary hover:underline disabled:opacity-50"
-                    >
-                      {sendingCode ? "Sending…" : "Resend code"}
-                    </button>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-
-            <button
-              onClick={() => {
-                setStep("lookup");
-                setError("");
-                setOtpCode("");
-              }}
-              className="mt-6 inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-primary transition-colors"
-            >
-              <ArrowLeft className="h-4 w-4" /> Use a different email
-            </button>
-          </div>
+          <VerifyEmailCode
+            email={email.trim().toLowerCase()}
+            description="Enter it below to confirm you own this listing before making any changes."
+            onVerified={loadMyListings}
+            onBack={() => {
+              setStep("lookup");
+              setError("");
+            }}
+          />
         )}
 
         {/* Step: Select */}
         {step === "select" && (
           <div>
-            <div className="flex items-center gap-2 mb-2">
-              <CheckCircle2 className="h-5 w-5 text-primary" />
-              <span className="text-sm font-semibold text-primary">
-                Email verified
-              </span>
+            <div className="flex items-center justify-between gap-4 mb-2">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="h-5 w-5 text-primary" />
+                <span className="text-sm font-semibold text-primary">
+                  Signed in as {email}
+                </span>
+              </div>
+              <button
+                onClick={handleSignOut}
+                className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-primary transition-colors"
+              >
+                <LogOut className="h-4 w-4" /> Sign out
+              </button>
             </div>
             <h1 className="font-display text-3xl font-bold tracking-tight mb-2">
               Your Listings
             </h1>
             <p className="text-muted-foreground mb-8">
-              We found {matches.length} listing{matches.length !== 1 ? "s" : ""}{" "}
-              matching your email. Select one to manage it.
+              {matches.length > 0
+                ? `You manage ${matches.length} listing${matches.length !== 1 ? "s" : ""}. Select one to edit it.`
+                : "There are no listings under this email yet."}
             </p>
+            {pendingClaims > 0 && (
+              <div className="mb-6 flex items-start gap-2 rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm">
+                <Clock className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                <span>
+                  You have {pendingClaims} claim request
+                  {pendingClaims !== 1 ? "s" : ""} waiting for review. Once
+                  approved, the listing will appear here.
+                </span>
+              </div>
+            )}
             <div className="space-y-3">
               {matches.map((v) => {
                 const cat = CATEGORIES.find((c) => c.id === v.category);
@@ -426,12 +364,7 @@ const ClaimListing = () => {
                 );
               })}
             </div>
-            <button
-              onClick={() => setStep("lookup")}
-              className="mt-6 inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-primary transition-colors"
-            >
-              <ArrowLeft className="h-4 w-4" /> Search again
-            </button>
+
           </div>
         )}
 

@@ -71,9 +71,9 @@ const VendorDetail = () => {
             addressRegion: v.state,
             addressCountry: "US",
           },
-          telephone: v.phone,
-          email: v.email,
-          url: v.website,
+          telephone: v.phone || undefined,
+          email: v.email || undefined,
+          url: v.website || undefined,
           priceRange: v.paid ? "$$" : "$",
           knowsAbout:
             v.servicesOffered.length > 0 ? v.servicesOffered : cat?.services,
@@ -243,36 +243,44 @@ const VendorDetail = () => {
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-2.5">
-                  <a
-                    href={`tel:${vendor.phone.replace(/[^0-9]/g, "")}`}
-                    className="flex items-center gap-2 text-sm hover:text-primary transition-colors"
-                  >
-                    <Phone className="h-4 w-4 text-primary" /> {vendor.phone}
-                  </a>
-                  <a
-                    href={`mailto:${vendor.email}`}
-                    className="flex items-center gap-2 text-sm hover:text-primary transition-colors break-all"
-                  >
-                    <Mail className="h-4 w-4 text-primary shrink-0" />{" "}
-                    {vendor.email}
-                  </a>
-                  <a
-                    href={vendor.website}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-2 text-sm hover:text-primary transition-colors break-all"
-                  >
-                    <Globe className="h-4 w-4 text-primary shrink-0" /> Visit
-                    Website
-                  </a>
-                  <Button
-                    asChild
-                    className="mt-2 w-full gradient-btn border-0 font-semibold"
-                  >
-                    <a href={`tel:${vendor.phone.replace(/[^0-9]/g, "")}`}>
-                      <Phone className="mr-1.5 h-4 w-4" /> Call Now
+                  {vendor.phone && (
+                    <a
+                      href={`tel:${vendor.phone.replace(/[^0-9]/g, "")}`}
+                      className="flex items-center gap-2 text-sm hover:text-primary transition-colors"
+                    >
+                      <Phone className="h-4 w-4 text-primary" /> {vendor.phone}
                     </a>
-                  </Button>
+                  )}
+                  {vendor.email && (
+                    <a
+                      href={`mailto:${vendor.email}`}
+                      className="flex items-center gap-2 text-sm hover:text-primary transition-colors break-all"
+                    >
+                      <Mail className="h-4 w-4 text-primary shrink-0" />{" "}
+                      {vendor.email}
+                    </a>
+                  )}
+                  {vendor.website && (
+                    <a
+                      href={vendor.website}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-2 text-sm hover:text-primary transition-colors break-all"
+                    >
+                      <Globe className="h-4 w-4 text-primary shrink-0" /> Visit
+                      Website
+                    </a>
+                  )}
+                  {vendor.phone && (
+                    <Button
+                      asChild
+                      className="mt-2 w-full gradient-btn border-0 font-semibold"
+                    >
+                      <a href={`tel:${vendor.phone.replace(/[^0-9]/g, "")}`}>
+                        <Phone className="mr-1.5 h-4 w-4" /> Call Now
+                      </a>
+                    </Button>
+                  )}
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button className="w-full border-primary/40 bg-primary/10 text-primary hover:bg-primary/20 font-semibold">
@@ -441,6 +449,30 @@ const VendorDetail = () => {
                         </p>
                       </div>
                     </div>
+                  ) : !vendor.claimed ? (
+                    <div className="flex items-start gap-3">
+                      <Clock className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
+                      <div>
+                        <p className="text-sm font-semibold text-foreground">
+                          Unclaimed Listing
+                        </p>
+                        <p className="mt-1 text-sm text-muted-foreground leading-relaxed">
+                          This listing was added from public business records
+                          and hasn't been claimed by its owner yet. Is this
+                          your business? Claim it for free to update your
+                          details and add your services.
+                        </p>
+                        <Button
+                          asChild
+                          size="sm"
+                          className="mt-3 gradient-btn border-0 font-semibold"
+                        >
+                          <Link to={`/claim/${vendor.id}`}>
+                            Claim this listing
+                          </Link>
+                        </Button>
+                      </div>
+                    </div>
                   ) : (
                     <div className="flex items-start gap-3">
                       <Clock className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
@@ -514,6 +546,32 @@ const VendorDetail = () => {
                         {vendor.rating} · {vendor.reviewCount ?? 0} reviews
                       </p>
                     </div>
+                  )}
+                  {vendor.source === "osm" && (
+                    <p className="border-t border-border/60 pt-3 text-xs text-muted-foreground">
+                      Business details from{" "}
+                      <a
+                        href={
+                          vendor.sourceRef
+                            ? `https://www.openstreetmap.org/${vendor.sourceRef}`
+                            : "https://www.openstreetmap.org"
+                        }
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="underline hover:text-primary"
+                      >
+                        OpenStreetMap
+                      </a>{" "}
+                      ©{" "}
+                      <a
+                        href="https://www.openstreetmap.org/copyright"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="underline hover:text-primary"
+                      >
+                        OpenStreetMap contributors
+                      </a>
+                    </p>
                   )}
                 </CardContent>
               </Card>

@@ -11,6 +11,7 @@ const Index = lazy(() => import("./pages/Index"));
 const VendorDetail = lazy(() => import("./pages/VendorDetail"));
 const SubmitListing = lazy(() => import("./pages/SubmitListing"));
 const ClaimListing = lazy(() => import("./pages/ClaimListing"));
+const ClaimBusiness = lazy(() => import("./pages/ClaimBusiness"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
 const queryClient = new QueryClient();
@@ -44,6 +45,7 @@ const App = () => (
               <Route path="/submit-listing" element={<SubmitListing />} />
               <Route path="/claim-listing" element={<ClaimListing />} />
               <Route path="/vendor/:id" element={<VendorDetail />} />
+              <Route path="/claim/:id" element={<ClaimBusiness />} />
               {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
               <Route path="*" element={<NotFound />} />
             </Routes>
