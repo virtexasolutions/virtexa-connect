@@ -49,6 +49,20 @@ export interface Vendor {
   facebook: string;
   instagram: string;
   linkedin: string;
+  claimed: boolean; // false for imported listings nobody has claimed yet
+  source: VendorSource;
+  sourceRef: string; // e.g. OpenStreetMap "node/123" for imported listings
+}
+
+export type VendorSource = "submitted" | "osm" | "admin";
+
+export interface ClaimRequest {
+  vendorId: string;
+  name: string;
+  email: string;
+  phone: string;
+  role: string;
+  message: string;
 }
 
 export const CATEGORIES: CategoryMeta[] = [
@@ -240,6 +254,9 @@ function mapRow(row: Record<string, unknown>): Vendor {
     facebook: (row.facebook as string) ?? "",
     instagram: (row.instagram as string) ?? "",
     linkedin: (row.linkedin as string) ?? "",
+    claimed: row.claimed == null ? true : Boolean(row.claimed),
+    source: ((row.source as string) ?? "submitted") as VendorSource,
+    sourceRef: (row.source_ref as string) ?? "",
   };
 }
 
@@ -333,83 +350,109 @@ export async function saveVendor(
   return { ok: true };
 }
 
-/** Find vendors by email (for claim/edit flow) */
-export async function findVendorsByEmail(email: string): Promise<Vendor[]> {
-  const { data, error } = await supabase
+// ---- Owner sign-in (Supabase Auth email code) ----
+// The Supabase "Confirm signup" and "Magic Link" email templates must include
+// {{ .Token }} so the email contains a code (see SUPABASE_SETUP.md).
+
+/** Email a one-time sign-in code. */
+export async function sendLoginCode(
+  email: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const { error } = await supabase.auth.signInWithOtp({
+    email,
+    options: { shouldCreateUser: true },
+  });
+  if (error) {
+    console.error("Failed to send sign-in code:", error);
+    return {
+      ok: false,
+      error:
+        error.status === 429
+          ? "Too many codes requested. Please wait a few minutes and try again."
+          : "Could not send the verification email. Please try again.",
+    };
+  }
+  return { ok: true };
+}
+
+/** Check the emailed code. On success the visitor is signed in as that email. */
+export async function verifyLoginCode(
+  email: string,
+  code: string,
+): Promise<boolean> {
+  const { data, error } = await supabase.auth.verifyOtp({
+    email,
+    token: code.trim(),
+    type: "email",
+  });
+  if (error) console.error("Failed to verify code:", error);
+  return !error && Boolean(data.session);
+}
+
+/** Email of the signed-in owner, or null. */
+export async function getSignedInEmail(): Promise<string | null> {
+  const { data } = await supabase.auth.getSession();
+  return data.session?.user.email?.toLowerCase() ?? null;
+}
+
+export async function signOut(): Promise<void> {
+  await supabase.auth.signOut();
+}
+
+/** Listings the signed-in email owns. */
+export async function fetchMyListings(): Promise<Vendor[]> {
+  const { data: owned, error } = await supabase
+    .from("vendor_owners")
+    .select("vendor_id");
+  if (error) {
+    console.error("Failed to load owned listings:", error);
+    return [];
+  }
+  const ids = (owned ?? []).map((r) => r.vendor_id as string);
+  if (ids.length === 0) return [];
+
+  const { data, error: vendorsError } = await supabase
     .from("vendors")
     .select("*")
-    .eq("email", email);
-
-  if (error) {
-    console.error("Failed to find vendors:", error);
+    .in("id", ids);
+  if (vendorsError) {
+    console.error("Failed to load owned listings:", vendorsError);
     return [];
   }
   return (data ?? []).map(mapRow);
 }
 
-/** Send a 6-digit verification code to the email on file for a listing.
- *  Stores the code in the `listing_otp` table and sends it via Supabase email. */
-export async function sendVerificationCode(
-  email: string,
-): Promise<{ ok: boolean; error?: string }> {
-  const code = Math.floor(100000 + Math.random() * 900000).toString();
-  const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // 10 min
-
-  // Insert / replace the OTP row
-  const { error: upsertError } = await supabase
-    .from("listing_otp")
-    .upsert({ email, code, expires_at: expiresAt }, { onConflict: "email" });
-
-  if (upsertError) {
-    console.error("Failed to store verification code:", upsertError);
-    return { ok: false, error: upsertError.message };
+/** IDs of listings the signed-in email has claims pending review for. */
+export async function fetchMyPendingClaimIds(): Promise<string[]> {
+  const { data, error } = await supabase
+    .from("listing_claims")
+    .select("vendor_id")
+    .eq("status", "pending");
+  if (error) {
+    console.error("Failed to load claims:", error);
+    return [];
   }
-
-  // Send the code via Supabase Auth email OTP (no signup required)
-  const { error: otpError } = await supabase.auth.signInWithOtp({
-    email,
-    options: {
-      shouldCreateUser: false,
-      emailRedirectTo: window.location.origin + "/claim-listing",
-    },
-  });
-
-  if (otpError) {
-    // Fallback: store code in the table only; user can still verify if we display it
-    // (In production a custom edge function would send the email with the code.)
-    console.error("Supabase OTP email failed:", otpError);
-    return {
-      ok: false,
-      error: "Could not send verification email. Please try again.",
-    };
-  }
-
-  return { ok: true };
+  return (data ?? []).map((r) => r.vendor_id as string);
 }
 
-/** Verify the 6-digit code for the given email. Returns true if valid & not expired. */
-export async function verifyCode(
-  email: string,
-  code: string,
-): Promise<boolean> {
-  const { data, error } = await supabase
-    .from("listing_otp")
-    .select("code, expires_at")
-    .eq("email", email)
-    .single();
-
-  if (error || !data) {
-    console.error("Failed to verify code:", error);
-    return false;
+/** Submit a claim request. The signed-in email must match `claim.email`. */
+export async function submitClaim(
+  claim: ClaimRequest,
+): Promise<{ ok: boolean; alreadyPending?: boolean; error?: string }> {
+  const { error } = await supabase.from("listing_claims").insert({
+    vendor_id: claim.vendorId,
+    claimant_name: claim.name,
+    claimant_email: claim.email.toLowerCase(),
+    claimant_phone: claim.phone,
+    claimant_role: claim.role,
+    message: claim.message,
+  });
+  if (error) {
+    if (error.code === "23505") return { ok: true, alreadyPending: true };
+    console.error("Failed to submit claim:", error);
+    return { ok: false, error: error.message };
   }
-
-  const stored = data as { code: string; expires_at: string };
-  if (stored.code !== code.trim()) return false;
-  if (new Date(stored.expires_at) < new Date()) return false;
-
-  // Clean up used code
-  await supabase.from("listing_otp").delete().eq("email", email);
-  return true;
+  return { ok: true };
 }
 
 /** Update an existing vendor in Supabase */
@@ -436,9 +479,14 @@ export async function updateVendor(
   if (updates.linkedin !== undefined) row.linkedin = updates.linkedin;
   if (updates.tags !== undefined) row.tags = updates.tags;
 
-  const { error } = await supabase.from("vendors").update(row).eq("id", id);
-  if (error) {
-    console.error("Failed to update vendor:", error);
+  // Row-level security silently skips listings you don't own, so confirm a row changed.
+  const { data, error } = await supabase
+    .from("vendors")
+    .update(row)
+    .eq("id", id)
+    .select("id");
+  if (error || !data?.length) {
+    console.error("Failed to update vendor:", error ?? "not an owner");
     return false;
   }
   return true;
@@ -446,9 +494,13 @@ export async function updateVendor(
 
 /** Delete a vendor from Supabase */
 export async function deleteVendor(id: string): Promise<boolean> {
-  const { error } = await supabase.from("vendors").delete().eq("id", id);
-  if (error) {
-    console.error("Failed to delete vendor:", error);
+  const { data, error } = await supabase
+    .from("vendors")
+    .delete()
+    .eq("id", id)
+    .select("id");
+  if (error || !data?.length) {
+    console.error("Failed to delete vendor:", error ?? "not an owner");
     return false;
   }
   return true;

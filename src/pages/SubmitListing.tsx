@@ -20,6 +20,7 @@ import {
   type VendorCategory,
   type Vendor,
 } from "@/data/vendors";
+import { postTrackingEvent, trackingContext } from "@/lib/tracking";
 import {
   ShieldCheck,
   BadgeCheck,
@@ -40,77 +41,6 @@ import {
 } from "lucide-react";
 const PAYMENT_LINK =
   "https://link.fastpaydirect.com/payment-link/6a866c3bf9c8c807930b9130";
-
-type StandardTrackingFieldKey = string;
-type RegisteredCustomFieldId = string;
-type TrackingCustomField = { value?: unknown; label: string };
-type TrackingFileField = { file?: File; label: string };
-type TrackingImageDataField = { dataUrl?: string; label: string };
-
-const postTrackingEvent = (
-  trackingPayload: Record<string, unknown> & {
-    formData: Record<StandardTrackingFieldKey, unknown>;
-    formLabels: Record<StandardTrackingFieldKey, string>;
-  },
-  options: {
-    customFields?: Record<RegisteredCustomFieldId, TrackingCustomField>;
-    fileFields?: Record<RegisteredCustomFieldId, TrackingFileField>;
-    imageDataFields?: Record<RegisteredCustomFieldId, TrackingImageDataField>;
-  } = {},
-) => {
-  const { customFields = {}, fileFields = {}, imageDataFields = {} } = options;
-  const eventPayload = {
-    ...trackingPayload,
-    formData: { ...trackingPayload.formData },
-    formLabels: { ...trackingPayload.formLabels },
-  };
-  const body = new FormData();
-
-  for (const [key, field] of Object.entries(customFields)) {
-    if (field.value === undefined) continue;
-    eventPayload.formData[key] = field.value;
-    eventPayload.formLabels[key] = field.label;
-  }
-
-  for (const [key, field] of Object.entries(imageDataFields)) {
-    const dataUrl = field.dataUrl;
-    if (!dataUrl) continue;
-    if (!dataUrl.startsWith("data:image/")) {
-      throw new Error("Image data field must be a data:image/* base64 string");
-    }
-    eventPayload.formData[key] = dataUrl;
-    eventPayload.formLabels[key] = field.label;
-  }
-
-  for (const [key, field] of Object.entries(fileFields)) {
-    const file = field.file;
-    if (!file) continue;
-    if (file.size > 50 * 1024 * 1024) {
-      throw new Error("File must be 50 MB or smaller");
-    }
-    eventPayload.formData[key] = {
-      filename: file.name,
-      size: file.size,
-      type: file.type || "application/octet-stream",
-    };
-    eventPayload.formLabels[key] = field.label;
-    body.append(key, file, file.name);
-  }
-
-  for (const key of Object.keys(eventPayload.formData)) {
-    eventPayload.formLabels[key] ||= key;
-  }
-
-  body.append("event", JSON.stringify(eventPayload));
-
-  fetch("https://backend.leadconnectorhq.com/external-tracking/events", {
-    method: "POST",
-    headers: {
-      version: "2021-07-28",
-    },
-    body,
-  }).catch(() => {});
-};
 
 const benefits = [
   {
@@ -244,22 +174,7 @@ const SubmitListing = () => {
         state: "State",
         country: "Country",
       },
-      url: window.location.href,
-      title: document.title,
-      path: window.location.pathname,
-      userAgent: navigator.userAgent,
-      trackingId: "tk_adcb99a208cf4be6bd275b1d38fd3ec4",
-      locationId: "x0DZpgAlhsZCbnEJ44Us",
-      projectId: "1787172171975390550",
-      sessionId: crypto.randomUUID(),
-      properties: {
-        deviceType: /Mobile|Android|iPhone/i.test(navigator.userAgent)
-          ? "mobile"
-          : "desktop",
-        source: "ai_studio",
-        projectId: "1787172171975390550",
-        formName: "Submit Free Listing",
-      },
+      ...trackingContext("Submit Free Listing"),
     };
 
     postTrackingEvent(trackingPayload, {
@@ -329,8 +244,9 @@ const SubmitListing = () => {
         selectedCategory?.label || formData.category,
         formData.city.trim(),
       ],
-      paid: formData.wantVerification,
-      verified: formData.wantVerification,
+      // The Partner Badge is switched on in Supabase after payment is confirmed.
+      paid: false,
+      verified: false,
       bio: formData.bio.trim(),
       longBio: formData.bio.trim(),
       servicesOffered: servicesArray,
@@ -338,6 +254,9 @@ const SubmitListing = () => {
       facebook: formData.facebook.trim(),
       instagram: formData.instagram.trim(),
       linkedin: formData.linkedin.trim(),
+      claimed: true,
+      source: "submitted",
+      sourceRef: "",
     };
 
     const result = await saveVendor(newVendor);

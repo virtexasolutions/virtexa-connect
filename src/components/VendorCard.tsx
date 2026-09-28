@@ -50,7 +50,7 @@ export function VendorCard({ vendor, category }: VendorCardProps) {
               </span>
             ) : (
               <span className="mt-1 inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                Free Listing
+                {vendor.claimed ? "Free Listing" : "Unclaimed Listing"}
               </span>
             )}
           </div>
