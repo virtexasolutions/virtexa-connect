@@ -302,7 +302,7 @@ const VendorDetail = () => {
                       </DropdownMenuItem>
                       <DropdownMenuItem asChild>
                         <a
-                          href="https://api.leadconnectorhq.com/widget/booking/lGWutJTLLOiszDqfKUfG"
+                          href="https://meetings-na2.hubspot.com/rikki-c"
                           target="_blank"
                           rel="noopener noreferrer"
                           className="cursor-pointer"
